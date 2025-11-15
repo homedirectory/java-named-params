@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <artifactId>named-params-parent</artifactId>
+    <groupId>homedir</groupId>
+    <version>1.0.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>named-params-test</artifactId>
+  <packaging>jar</packaging>
+
+  <name>Named Parameters Tests</name>
+
+  <properties>
+    <maven.compiler.release>25</maven.compiler.release>
+  </properties>
+
+  <dependencies>
+
+    <dependency>
+      <groupId>homedir</groupId>
+      <artifactId>named-params</artifactId>
+      <version>${project.parent.version}</version>
+    </dependency>
+
+  </dependencies>
+
+  <build>
+
+    <plugins>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <release>25</release>
+          <encoding>UTF-8</encoding>
+          <showWarnings>true</showWarnings>
+          <generatedSourcesDirectory>${project.build.directory}/generated-sources</generatedSourcesDirectory>
+          <annotationProcessors>
+            <annotationProcessor>homedir.named_params.processor.NamedParametersProcessor</annotationProcessor>
+          </annotationProcessors>
+        </configuration>
+      </plugin>
+
+    </plugins>
+
+  </build>
+
+</project>
