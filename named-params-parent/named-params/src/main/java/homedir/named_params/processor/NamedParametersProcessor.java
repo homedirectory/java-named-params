@@ -4,6 +4,7 @@ import com.palantir.javapoet.*;
 import homedir.named_params.NamedParameters;
 
 import javax.annotation.processing.AbstractProcessor;
+import javax.annotation.processing.Generated;
 import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.lang.model.SourceVersion;
@@ -13,6 +14,8 @@ import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.TypeKind;
 import javax.tools.Diagnostic;
 import java.io.IOException;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -137,6 +140,12 @@ public class NamedParametersProcessor extends AbstractProcessor {
         for (var i = 1; i <= method.getParameters().size(); i++) {
             genClassBuilder = genClassBuilder.addMethod(createMethod(method, i, paramTypeName, genMethodName));
         }
+
+        genClassBuilder = genClassBuilder.addAnnotation(
+                AnnotationSpec.builder(Generated.class)
+                        .addMember("value", "$S", NamedParametersProcessor.class.getCanonicalName())
+                        .addMember("date", "$S", ZonedDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME))
+                        .build());
 
         final var pkgName = processingEnv.getElementUtils().getPackageOf(typeElt).getQualifiedName();
         return Optional.of(JavaFile.builder(pkgName.toString(), genClassBuilder.build()).build());
