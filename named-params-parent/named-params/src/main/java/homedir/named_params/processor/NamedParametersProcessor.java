@@ -9,7 +9,6 @@ import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.TypeKind;
 import javax.tools.Diagnostic;
@@ -26,8 +25,7 @@ import java.util.stream.Stream;
 import static com.palantir.javapoet.MethodSpec.methodBuilder;
 import static homedir.named_params.processor.Report.report;
 import static java.util.Objects.requireNonNull;
-import static javax.lang.model.element.Modifier.PUBLIC;
-import static javax.lang.model.element.Modifier.STATIC;
+import static javax.lang.model.element.Modifier.*;
 
 @SupportedAnnotationTypes("homedir.named_params.NamedParameters")
 public class NamedParametersProcessor extends AbstractProcessor {
@@ -111,15 +109,15 @@ public class NamedParametersProcessor extends AbstractProcessor {
         final var genMethodName = atNamedParameters.value().isEmpty() ? method.getSimpleName() : atNamedParameters.value();
 
         // The generated methods will be declared in a generated class in the same package as the input method.
-        var genClassBuilder = TypeSpec.classBuilder("%s$%s_NamedParams".formatted(typeElt.getSimpleName(), genMethodName))
-                .addModifiers(PUBLIC, Modifier.FINAL);
+        var genClassBuilder = TypeSpec.interfaceBuilder("%s$%s_NamedParams".formatted(typeElt.getSimpleName(), genMethodName))
+                .addModifiers(PUBLIC);
 
         // Generate a Param<T> type and its instances.
         // TODO Handle primitive types.
         // TODO Handle generic methods.
 
         final var paramTypeSpec = TypeSpec.interfaceBuilder("Param")
-                // .addModifiers(Modifier.STATIC)
+                .addModifiers(PUBLIC, STATIC)
                 .addTypeVariable(TypeVariableName.get("T"))
                 .build();
         genClassBuilder = genClassBuilder.addType(paramTypeSpec);
@@ -130,7 +128,7 @@ public class NamedParametersProcessor extends AbstractProcessor {
                 .stream()
                 .map(param -> FieldSpec.builder(ParameterizedTypeName.get(paramTypeName, TypeName.get(param.asType())),
                                                 param.getSimpleName().toString(),
-                                                PUBLIC, STATIC, Modifier.FINAL)
+                                                PUBLIC, STATIC, FINAL)
                         .initializer("new $T<>(){}", paramTypeName)
                         .build())
                 .toList();
