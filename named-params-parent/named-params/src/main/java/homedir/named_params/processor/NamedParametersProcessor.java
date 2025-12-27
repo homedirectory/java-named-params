@@ -50,7 +50,6 @@ public class NamedParametersProcessor extends AbstractProcessor {
         if (roundNumber == 1) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "Processing round 1.");
             processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "Root elements: %s".formatted(roundEnv.getRootElements()));
-            // For now, only static methods are supported.
             roundEnv.getElementsAnnotatedWith(NamedParameters.class)
                     .stream()
                     .map(elt -> elt instanceof ExecutableElement it ? it : null)
@@ -86,10 +85,6 @@ public class NamedParametersProcessor extends AbstractProcessor {
 
     private Optional<JavaFile> processMethod(final ExecutableElement method) {
         processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "Processing method [%s].".formatted(method));
-
-        if (!method.getModifiers().contains(STATIC)) {
-            throw new ProcessingRuntimeException("Annotated method [%s] must be static.".formatted(method), report().element(method));
-        }
 
         if (!(method.getEnclosingElement() instanceof TypeElement typeElt)) {
             throw new ProcessingRuntimeException("Annotated method [%s] must be declared in a top-level class.".formatted(method), report().element(method));
@@ -215,6 +210,8 @@ public class NamedParametersProcessor extends AbstractProcessor {
                 .map(m -> "_%s".formatted(m.getSimpleName()))
                 .toList();
 
+        final var isStatic = sourceMethod.getModifiers().contains(STATIC);
+
         var bodyBuilder = CodeBlock.builder();
         for (var i = 0; i < sourceMethod.getParameters().size(); i++) {
             final var sourceParamElt = sourceMethod.getParameters().get(i);
@@ -227,11 +224,15 @@ public class NamedParametersProcessor extends AbstractProcessor {
             }
             bodyBuilder.addStatement("else $N = null", localVarName);
         }
+
+        final var callTarget = isStatic
+                ? CodeBlock.of("$T", sourceMethod.getEnclosingElement().asType())
+                : CodeBlock.of("(($T) this)", sourceMethod.getEnclosingElement().asType());
         bodyBuilder.addStatement((sourceMethod.getReturnType().getKind() == TypeKind.VOID ? "" : "return ")
-                                 + "$T.$N($L)", sourceMethod.getEnclosingElement().asType(), sourceMethod.getSimpleName(), String.join(", ", localVars));
+                                 + "$L.$N($L)", callTarget, sourceMethod.getSimpleName(), String.join(", ", localVars));
 
         return methodBuilder(methodName.toString())
-                .addModifiers(PUBLIC, STATIC)
+                .addModifiers(PUBLIC, isStatic ? STATIC : DEFAULT)
                 .addTypeVariables(typeVars)
                 .addParameters(methodParams)
                 .returns(TypeName.get(sourceMethod.getReturnType()))
