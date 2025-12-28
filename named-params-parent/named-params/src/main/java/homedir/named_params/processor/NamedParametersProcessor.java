@@ -1,6 +1,7 @@
 package homedir.named_params.processor;
 
 import com.palantir.javapoet.*;
+import homedir.named_params.Named;
 import homedir.named_params.NamedParameters;
 
 import javax.annotation.processing.AbstractProcessor;
@@ -10,6 +11,7 @@ import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeKind;
 import javax.tools.Diagnostic;
 import java.io.IOException;
@@ -25,6 +27,8 @@ import java.util.stream.Stream;
 import static com.palantir.javapoet.MethodSpec.methodBuilder;
 import static homedir.named_params.processor.Report.report;
 import static java.util.Objects.requireNonNull;
+import static java.util.function.Predicate.not;
+import static java.util.stream.Collectors.joining;
 import static javax.lang.model.element.Modifier.*;
 
 @SupportedAnnotationTypes("homedir.named_params.NamedParameters")
@@ -90,9 +94,15 @@ public class NamedParametersProcessor extends AbstractProcessor {
             throw new ProcessingRuntimeException("Annotated method [%s] must be declared in a top-level class.".formatted(method), report().element(method));
         }
 
-        if (method.getParameters().isEmpty()) {
+        final var namedParameters = method.getParameters()
+                .stream()
+                .filter(p -> p.getAnnotation(Named.class) != null)
+                .toList();
+        // TODO Validate: @Named parameters must be trailing.
+
+        if (namedParameters.isEmpty()) {
             // Nothing to do.
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "Skipping parameterless method [%s].".formatted(method));
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "Skipping method without named parameters: [%s].".formatted(method));
             return Optional.empty();
         }
 
@@ -119,19 +129,20 @@ public class NamedParametersProcessor extends AbstractProcessor {
 
         final var paramTypeName = ClassName.get("", "Param");
 
-        final var paramFields = method.getParameters()
+        final var paramFields = namedParameters
                 .stream()
                 .map(param -> FieldSpec.builder(ParameterizedTypeName.get(paramTypeName, TypeName.get(param.asType())),
-                                                param.getSimpleName().toString(),
+                                                genParameterName(param),
                                                 PUBLIC, STATIC, FINAL)
                         .initializer("new $T<>(){}", paramTypeName)
                         .build())
                 .toList();
         genClassBuilder = genClassBuilder.addFields(paramFields);
 
-        // Generate overloads with 1...n Param<T> parameters.
-        for (var i = 1; i <= method.getParameters().size(); i++) {
-            genClassBuilder = genClassBuilder.addMethod(createMethod(method, i, paramTypeName, genMethodName));
+        // Generate overloads with 1...n Param<T> named parameters.
+        final var mandatoryParamCount = method.getParameters().size() - namedParameters.size();
+        for (var i = 1; i <= namedParameters.size(); i++) {
+            genClassBuilder = genClassBuilder.addMethod(createMethod(method, mandatoryParamCount, i, paramTypeName, genMethodName));
         }
 
         genClassBuilder = genClassBuilder.addAnnotation(
@@ -142,6 +153,13 @@ public class NamedParametersProcessor extends AbstractProcessor {
 
         final var pkgName = processingEnv.getElementUtils().getPackageOf(typeElt).getQualifiedName();
         return Optional.of(JavaFile.builder(pkgName.toString(), genClassBuilder.build()).build());
+    }
+
+    private String genParameterName(VariableElement parameter) {
+        return Optional.ofNullable(parameter.getAnnotation(Named.class))
+                .map(Named::value)
+                .filter(not(String::isEmpty))
+                .orElseGet(() -> parameter.getSimpleName().toString());
     }
 
     /// ## Example source method
@@ -185,20 +203,32 @@ public class NamedParametersProcessor extends AbstractProcessor {
     ///
     private MethodSpec createMethod(
             final ExecutableElement sourceMethod,
-            final int paramCount,
+            final int mandatoryParamCount,
+            final int namedParamCount,
             final ClassName paramClassName,
             final CharSequence methodName)
     {
-        if (paramCount <= 0) {
-            throw new IllegalArgumentException("paramCount: %s".formatted(paramCount));
+        if (mandatoryParamCount < 0) {
+            throw new IllegalArgumentException("mandatoryParamCount: %s".formatted(mandatoryParamCount));
+        }
+        if (namedParamCount <= 0) {
+            throw new IllegalArgumentException("paramCount: %s".formatted(namedParamCount));
         }
 
-        final var typeVars = IntStream.rangeClosed(1, paramCount)
+        final var totalNamedParamCount = sourceMethod.getParameters().size() - mandatoryParamCount;
+
+        final var typeVars = IntStream.rangeClosed(1, namedParamCount)
                 .mapToObj(i -> TypeVariableName.get("T" + i))
                 .toList();
 
         // TODO Support type variables in the source method.
-        final var methodParams = IntStream.rangeClosed(1, paramCount)
+
+        final var genMandatoryParams = sourceMethod.getParameters().subList(0, mandatoryParamCount)
+                .stream()
+                .map(ParameterSpec::get)
+                .toList();
+
+        final var genNamedParams = IntStream.rangeClosed(1, namedParamCount)
                 .mapToObj(i -> Stream.of(
                         ParameterSpec.builder(ParameterizedTypeName.get(paramClassName, typeVars.get(i-1)), "p" + i).build(),
                         ParameterSpec.builder(typeVars.get(i-1), "v" + i).build()))
@@ -207,20 +237,21 @@ public class NamedParametersProcessor extends AbstractProcessor {
 
         final var localVars = sourceMethod.getParameters()
                 .stream()
-                .map(m -> "_%s".formatted(m.getSimpleName()))
+                .skip(mandatoryParamCount)
+                .map(param -> "_%s".formatted(genParameterName(param)))
                 .toList();
 
         final var isStatic = sourceMethod.getModifiers().contains(STATIC);
 
         var bodyBuilder = CodeBlock.builder();
-        for (var i = 0; i < sourceMethod.getParameters().size(); i++) {
-            final var sourceParamElt = sourceMethod.getParameters().get(i);
+        for (var i = 0; i < totalNamedParamCount; i++) {
+            final var sourceParamElt = sourceMethod.getParameters().get(i + mandatoryParamCount);
             final var localVarName = localVars.get(i);
             final var localVarType = sourceParamElt.asType();
             bodyBuilder.addStatement("$T $N", localVarType, localVarName);
-            for (var j = 0; j < paramCount; j++) {
+            for (var j = 0; j < namedParamCount; j++) {
                 bodyBuilder.addStatement((j == 0 ? "if " : "else if ") + "($N == $N) $N = ($T) $N",
-                                         methodParams.get(j*2), sourceParamElt.getSimpleName(), localVarName, localVarType, methodParams.get(j*2 + 1));
+                                         genNamedParams.get(j*2), genParameterName(sourceParamElt), localVarName, localVarType, genNamedParams.get(j*2 + 1));
             }
             bodyBuilder.addStatement("else $N = null", localVarName);
         }
@@ -228,13 +259,15 @@ public class NamedParametersProcessor extends AbstractProcessor {
         final var callTarget = isStatic
                 ? CodeBlock.of("$T", sourceMethod.getEnclosingElement().asType())
                 : CodeBlock.of("(($T) this)", sourceMethod.getEnclosingElement().asType());
-        bodyBuilder.addStatement((sourceMethod.getReturnType().getKind() == TypeKind.VOID ? "" : "return ")
-                                 + "$L.$N($L)", callTarget, sourceMethod.getSimpleName(), String.join(", ", localVars));
+        bodyBuilder.addStatement((sourceMethod.getReturnType().getKind() == TypeKind.VOID ? "" : "return ") + "$L.$N($L)",
+                                 callTarget,
+                                 sourceMethod.getSimpleName(),
+                                 Stream.concat(genMandatoryParams.stream().map(ParameterSpec::name), localVars.stream()).collect(joining(", ")));
 
         return methodBuilder(methodName.toString())
                 .addModifiers(PUBLIC, isStatic ? STATIC : DEFAULT)
                 .addTypeVariables(typeVars)
-                .addParameters(methodParams)
+                .addParameters(Stream.concat(genMandatoryParams.stream(), genNamedParams.stream()).toList())
                 .returns(TypeName.get(sourceMethod.getReturnType()))
                 .addCode(bodyBuilder.build())
                 .build();
