@@ -17,6 +17,7 @@ import javax.tools.Diagnostic;
 import java.io.IOException;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -94,11 +95,19 @@ public class NamedParametersProcessor extends AbstractProcessor {
             throw new ProcessingRuntimeException("Annotated method [%s] must be declared in a top-level class.".formatted(method), report().element(method));
         }
 
+        method.getParameters()
+                .stream()
+                .dropWhile(param -> param.getAnnotation(Named.class) == null)
+                .filter(param -> param.getAnnotation(Named.class) == null)
+                .findFirst()
+                .ifPresent(param -> {
+                    throw new ProcessingRuntimeException("Mandatory parameters cannot be declared after named parameters.", report().element(param));
+                });
+
         final var namedParameters = method.getParameters()
                 .stream()
                 .filter(p -> p.getAnnotation(Named.class) != null)
                 .toList();
-        // TODO Validate: @Named parameters must be trailing.
 
         if (namedParameters.isEmpty()) {
             // Nothing to do.
