@@ -9,6 +9,10 @@ import java.lang.annotation.Target;
 ///
 /// This annotation should be used only in conjunction with [NamedParameters].
 ///
+/// If a method call does not specify an argument for a named parameter, a default value is used.
+/// * For primitive types, the [Named] annotation must specify the default value using one of the `default*` members.
+/// * For other types, `null` is used as the default value.
+///
 /// @see NamedParameters
 ///
 @Retention(RetentionPolicy.RUNTIME)
