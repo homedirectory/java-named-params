@@ -20,4 +20,20 @@ public @interface Named {
     ///
     String value() default "";
 
+    int defaultInt() default 0;
+
+    char defaultChar() default ' ';
+
+    boolean defaultBool() default true;
+
+    byte defaultByte() default 0;
+
+    short defaultShort() default 0;
+
+    long defaultLong() default 0;
+
+    float defaultFloat() default 0;
+
+    double defaultDouble() default 0;
+
 }

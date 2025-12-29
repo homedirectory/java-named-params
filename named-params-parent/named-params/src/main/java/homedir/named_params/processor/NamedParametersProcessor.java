@@ -8,16 +8,16 @@ import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.Generated;
 import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
+import javax.lang.model.AnnotatedConstruct;
 import javax.lang.model.SourceVersion;
-import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.element.TypeElement;
-import javax.lang.model.element.VariableElement;
+import javax.lang.model.element.*;
 import javax.lang.model.type.TypeKind;
 import javax.tools.Diagnostic;
 import java.io.IOException;
+import java.lang.annotation.Annotation;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -27,6 +27,7 @@ import java.util.stream.Stream;
 
 import static com.palantir.javapoet.MethodSpec.methodBuilder;
 import static homedir.named_params.processor.Report.report;
+import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 import static java.util.function.Predicate.not;
 import static java.util.stream.Collectors.joining;
@@ -104,6 +105,14 @@ public class NamedParametersProcessor extends AbstractProcessor {
                     throw new ProcessingRuntimeException("Mandatory parameters cannot be declared after named parameters.", report().element(param));
                 });
 
+        method.getParameters()
+                .stream()
+                .filter(param -> param.getAnnotation(Named.class) != null && param.asType().getKind().isPrimitive() && !hasDefault(param))
+                .findFirst()
+                .ifPresent(param -> {
+                    throw new ProcessingRuntimeException("Named parameter with a primitive type must specify a default value.", report().element(param).annotation(Named.class));
+                });
+
         final var namedParameters = method.getParameters()
                 .stream()
                 .filter(p -> p.getAnnotation(Named.class) != null)
@@ -127,7 +136,6 @@ public class NamedParametersProcessor extends AbstractProcessor {
                 .addModifiers(PUBLIC);
 
         // Generate a Param<T> type and its instances.
-        // TODO Handle primitive types.
         // TODO Handle generic methods.
 
         final var paramTypeSpec = TypeSpec.interfaceBuilder("Param")
@@ -140,7 +148,7 @@ public class NamedParametersProcessor extends AbstractProcessor {
 
         final var paramFields = namedParameters
                 .stream()
-                .map(param -> FieldSpec.builder(ParameterizedTypeName.get(paramTypeName, TypeName.get(param.asType())),
+                .map(param -> FieldSpec.builder(ParameterizedTypeName.get(paramTypeName, TypeName.get(param.asType()).box()),
                                                 genParameterName(param),
                                                 PUBLIC, STATIC, FINAL)
                         .initializer("new $T<>(){}", paramTypeName)
@@ -164,6 +172,10 @@ public class NamedParametersProcessor extends AbstractProcessor {
         return Optional.of(JavaFile.builder(pkgName.toString(), genClassBuilder.build()).build());
     }
 
+    private boolean hasDefault(final VariableElement param) {
+        return maybeNamedParamDefaultValue(param).isPresent();
+    }
+
     private String genParameterName(VariableElement parameter) {
         return Optional.ofNullable(parameter.getAnnotation(Named.class))
                 .map(Named::value)
@@ -174,7 +186,7 @@ public class NamedParametersProcessor extends AbstractProcessor {
     /// ## Example source method
     ///
     /// ```
-    /// static Object make(String s, Integer i) { ... }
+    /// static Object make(@Named String s, @Named(defaultInt = 1) int i) { ... }
     /// ```
     ///
     /// ## Example generated methods
@@ -185,26 +197,26 @@ public class NamedParametersProcessor extends AbstractProcessor {
     ///
     /// static <T1> Object make(Param<T1> p1, T1 v1) {
     ///     String _s;
-    ///     if (p1 == s) _s = v1;
+    ///     if (p1 == s) _s = (String) v1;
     ///     else _s = null;
     ///
-    ///     Integer _i;
-    ///     if (p1 == i) _i = v1;
-    ///     else _i = null;
+    ///     int _i;
+    ///     if (p1 == i) _i = (int) v1;
+    ///     else _i = 1;
     ///
     ///     return make(_s, _i);
     /// }
     ///
     /// static <T1,T2> Object make(Param<T1> p1, T1 v1, Param<T2> p2, T2 v2) {
     ///     String _s;
-    ///     if (p1 == s) _s = v1;
-    ///     else if (p2 == s) _s = v2;
+    ///     if (p1 == s) _s = (String) v1;
+    ///     else if (p2 == s) _s = (String) v2;
     ///     else _s = null;
     ///
-    ///     Integer _i;
-    ///     if (p1 == i) _i = v1;
-    ///     else if (p2 == i) _i = v2;
-    ///     else _i = null;
+    ///     int _i;
+    ///     if (p1 == i) _i = (int) v1;
+    ///     else if (p2 == i) _i = (int) v2;
+    ///     else _i = 1;
     ///
     ///     return make(_s, _i);
     /// }
@@ -262,7 +274,11 @@ public class NamedParametersProcessor extends AbstractProcessor {
                 bodyBuilder.addStatement((j == 0 ? "if " : "else if ") + "($N == $N) $N = ($T) $N",
                                          genNamedParams.get(j*2), genParameterName(sourceParamElt), localVarName, localVarType, genNamedParams.get(j*2 + 1));
             }
-            bodyBuilder.addStatement("else $N = null", localVarName);
+            bodyBuilder.addStatement("else $N = $L",
+                                     localVarName,
+                                     localVarType.getKind().isPrimitive()
+                                             ? namedParamDefaultValue(sourceParamElt)
+                                             : "null");
         }
 
         final var callTarget = isStatic
@@ -281,5 +297,50 @@ public class NamedParametersProcessor extends AbstractProcessor {
                 .addCode(bodyBuilder.build())
                 .build();
     }
-    
+
+    private Optional<AnnotationValue> maybeNamedParamDefaultValue(final VariableElement param) {
+        final var amNamed = findAnnotationMirror(param, Named.class).orElseThrow();
+        final var memberName = switch (param.asType().getKind()) {
+            case BOOLEAN -> "defaultBool";
+            case BYTE -> "defaultByte";
+            case SHORT -> "defaultShort";
+            case INT -> "defaultInt";
+            case LONG -> "defaultLong";
+            case CHAR -> "defaultChar";
+            case FLOAT -> "defaultFloat";
+            case DOUBLE -> "defaultDouble";
+            default -> throw new IllegalStateException(format("Unexpected named parameter type: %s", param));
+        };
+        return maybeAnnotationMemberValue(amNamed, memberName);
+    }
+
+    private AnnotationValue namedParamDefaultValue(final VariableElement param) {
+        return maybeNamedParamDefaultValue(param)
+                .orElseThrow(() -> new IllegalStateException("Named parameter [%s] does not specify a default value."));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Optional<AnnotationValue> maybeAnnotationMemberValue(final AnnotationMirror mirror, final String memberName) {
+        return (Optional<AnnotationValue>) mirror.getElementValues()
+                .entrySet()
+                .stream()
+                .filter(entry -> entry.getKey().getSimpleName().contentEquals(memberName))
+                .map(Map.Entry::getValue)
+                .findFirst();
+    }
+
+    private AnnotationValue annotationMemberValue(final AnnotationMirror mirror, final String memberName) {
+        return maybeAnnotationMemberValue(mirror, memberName)
+                .orElseThrow(() -> new IllegalStateException(format("Member [%s] is absent in annotation %s", memberName, mirror)));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Optional<AnnotationMirror> findAnnotationMirror(final AnnotatedConstruct element, final Class<? extends Annotation> type) {
+        return (Optional<AnnotationMirror>) element.getAnnotationMirrors()
+                .stream()
+                .filter(am -> am.getAnnotationType().asElement() instanceof TypeElement typeElt
+                              && typeElt.getQualifiedName().contentEquals(type.getCanonicalName()))
+                .findFirst();
+    }
+
 }
