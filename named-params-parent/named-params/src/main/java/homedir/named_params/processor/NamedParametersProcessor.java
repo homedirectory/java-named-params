@@ -155,9 +155,9 @@ public class NamedParametersProcessor extends AbstractProcessor {
                 .toList();
         genClassBuilder = genClassBuilder.addFields(paramFields);
 
-        // Generate overloads with 1...n Param<T> named parameters.
+        // Generate overloads with 0...n Param<T> named parameters.
         final var mandatoryParamCount = method.getParameters().size() - namedParameters.size();
-        for (var i = 1; i <= namedParameters.size(); i++) {
+        for (var i = 0; i <= namedParameters.size(); i++) {
             genClassBuilder = genClassBuilder.addMethod(createMethod(method, mandatoryParamCount, i, paramTypeName, genMethodName));
         }
 
@@ -245,7 +245,7 @@ public class NamedParametersProcessor extends AbstractProcessor {
         if (mandatoryParamCount < 0) {
             throw new IllegalArgumentException("mandatoryParamCount: %s".formatted(mandatoryParamCount));
         }
-        if (namedParamCount <= 0) {
+        if (namedParamCount < 0) {
             throw new IllegalArgumentException("paramCount: %s".formatted(namedParamCount));
         }
 
@@ -282,16 +282,16 @@ public class NamedParametersProcessor extends AbstractProcessor {
             final var sourceParamElt = sourceMethod.getParameters().get(i + mandatoryParamCount);
             final var localVarName = localVars.get(i);
             final var localVarType = genParamType(sourceParamElt);
-            bodyBuilder.addStatement("$T $N", localVarType, localVarName);
-            for (var j = 0; j < namedParamCount; j++) {
-                bodyBuilder.addStatement((j == 0 ? "if " : "else if ") + "($N == $N) $N = ($T) $N",
-                                         genNamedParams.get(j*2), genParameterName(sourceParamElt), localVarName, localVarType, genNamedParams.get(j*2 + 1));
-            }
-            bodyBuilder.addStatement("else $N = $L",
+            bodyBuilder.addStatement("$T $N = $L",
+                                     localVarType,
                                      localVarName,
                                      localVarType.getKind().isPrimitive()
                                              ? namedParamDefaultValue(sourceParamElt)
                                              : "null");
+            for (var j = 0; j < namedParamCount; j++) {
+                bodyBuilder.addStatement((j == 0 ? "if " : "else if ") + "($N == $N) $N = ($T) $N",
+                                         genNamedParams.get(j*2), genParameterName(sourceParamElt), localVarName, localVarType, genNamedParams.get(j*2 + 1));
+            }
         }
 
         final var callTarget = isStatic
