@@ -11,7 +11,7 @@ import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.lang.model.AnnotatedConstruct;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.*;
-import javax.lang.model.type.TypeKind;
+import javax.lang.model.type.*;
 import javax.tools.Diagnostic;
 import java.io.IOException;
 import java.lang.annotation.Annotation;
@@ -136,7 +136,6 @@ public class NamedParametersProcessor extends AbstractProcessor {
                 .addModifiers(PUBLIC);
 
         // Generate a Param<T> type and its instances.
-        // TODO Handle generic methods.
 
         final var paramTypeSpec = TypeSpec.interfaceBuilder("Param")
                 .addModifiers(PUBLIC, STATIC)
@@ -148,7 +147,7 @@ public class NamedParametersProcessor extends AbstractProcessor {
 
         final var paramFields = namedParameters
                 .stream()
-                .map(param -> FieldSpec.builder(ParameterizedTypeName.get(paramTypeName, TypeName.get(param.asType()).box()),
+                .map(param -> FieldSpec.builder(ParameterizedTypeName.get(paramTypeName, TypeName.get(genParamType(param)).box()),
                                                 genParameterName(param),
                                                 PUBLIC, STATIC, FINAL)
                         .initializer("new $T<>(){}", paramTypeName)
@@ -181,6 +180,20 @@ public class NamedParametersProcessor extends AbstractProcessor {
                 .map(Named::value)
                 .filter(not(String::isEmpty))
                 .orElseGet(() -> parameter.getSimpleName().toString());
+    }
+
+    private TypeMirror genParamType(VariableElement param) {
+        return genParamType_(param.asType());
+    }
+
+    private TypeMirror genParamType_(TypeMirror tm) {
+        return switch (tm) {
+            case PrimitiveType it -> it;
+            case ArrayType it -> processingEnv.getTypeUtils().erasure(it);
+            case DeclaredType it -> processingEnv.getTypeUtils().erasure(it);
+            case TypeVariable it -> processingEnv.getTypeUtils().erasure(it);
+            default -> throw new IllegalStateException(format("Unsupported named parameter type: %s", tm));
+        };
     }
 
     /// ## Example source method
@@ -268,7 +281,7 @@ public class NamedParametersProcessor extends AbstractProcessor {
         for (var i = 0; i < totalNamedParamCount; i++) {
             final var sourceParamElt = sourceMethod.getParameters().get(i + mandatoryParamCount);
             final var localVarName = localVars.get(i);
-            final var localVarType = sourceParamElt.asType();
+            final var localVarType = genParamType(sourceParamElt);
             bodyBuilder.addStatement("$T $N", localVarType, localVarName);
             for (var j = 0; j < namedParamCount; j++) {
                 bodyBuilder.addStatement((j == 0 ? "if " : "else if ") + "($N == $N) $N = ($T) $N",
