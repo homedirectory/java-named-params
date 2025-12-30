@@ -133,7 +133,8 @@ public class NamedParametersProcessor extends AbstractProcessor {
 
         // The generated methods will be declared in a generated class in the same package as the input method.
         var genClassBuilder = TypeSpec.interfaceBuilder("%s$%s_NamedParams".formatted(typeElt.getSimpleName(), genMethodName))
-                .addModifiers(PUBLIC);
+                .addModifiers(PUBLIC)
+                .addTypeVariables(typeElt.getTypeParameters().stream().map(TypeVariableName::get).toList());
 
         // Generate a Param<T> type and its instances.
 
@@ -251,11 +252,9 @@ public class NamedParametersProcessor extends AbstractProcessor {
 
         final var totalNamedParamCount = sourceMethod.getParameters().size() - mandatoryParamCount;
 
-        final var typeVars = IntStream.rangeClosed(1, namedParamCount)
+        final var paramTypeVars = IntStream.rangeClosed(1, namedParamCount)
                 .mapToObj(i -> TypeVariableName.get("T" + i))
                 .toList();
-
-        // TODO Support type variables in the source method.
 
         final var genMandatoryParams = sourceMethod.getParameters().subList(0, mandatoryParamCount)
                 .stream()
@@ -264,8 +263,8 @@ public class NamedParametersProcessor extends AbstractProcessor {
 
         final var genNamedParams = IntStream.rangeClosed(1, namedParamCount)
                 .mapToObj(i -> Stream.of(
-                        ParameterSpec.builder(ParameterizedTypeName.get(paramClassName, typeVars.get(i-1)), "p" + i).build(),
-                        ParameterSpec.builder(typeVars.get(i-1), "v" + i).build()))
+                        ParameterSpec.builder(ParameterizedTypeName.get(paramClassName, paramTypeVars.get(i-1)), "p" + i).build(),
+                        ParameterSpec.builder(paramTypeVars.get(i-1), "v" + i).build()))
                 .flatMap(Function.identity())
                 .toList();
 
@@ -304,7 +303,8 @@ public class NamedParametersProcessor extends AbstractProcessor {
 
         return methodBuilder(methodName.toString())
                 .addModifiers(PUBLIC, isStatic ? STATIC : DEFAULT)
-                .addTypeVariables(typeVars)
+                .addTypeVariables(sourceMethod.getTypeParameters().stream().map(TypeVariableName::get).toList())
+                .addTypeVariables(paramTypeVars)
                 .addParameters(Stream.concat(genMandatoryParams.stream(), genNamedParams.stream()).toList())
                 .returns(TypeName.get(sourceMethod.getReturnType()))
                 .addCode(bodyBuilder.build())
