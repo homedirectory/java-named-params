@@ -296,10 +296,17 @@ public class NamedParametersProcessor extends AbstractProcessor {
         final var callTarget = isStatic
                 ? CodeBlock.of("$T", sourceMethod.getEnclosingElement().asType())
                 : CodeBlock.of("(($T) this)", sourceMethod.getEnclosingElement().asType());
-        bodyBuilder.addStatement((sourceMethod.getReturnType().getKind() == TypeKind.VOID ? "" : "return ") + "$L.$N($L)",
-                                 callTarget,
-                                 sourceMethod.getSimpleName(),
-                                 Stream.concat(genMandatoryParams.stream().map(ParameterSpec::name), localVars.stream()).collect(joining(", ")));
+
+        bodyBuilder.addStatement(
+                CodeBlock.builder()
+                        .add(sourceMethod.getReturnType().getKind() == TypeKind.VOID
+                                     ? CodeBlock.of("")
+                                     : CodeBlock.of("return ($T) ", sourceMethod.getReturnType()))
+                        .add(CodeBlock.of("$L.$N($L)",
+                                          callTarget,
+                                          sourceMethod.getSimpleName(),
+                                          Stream.concat(genMandatoryParams.stream().map(ParameterSpec::name), localVars.stream()).collect(joining(", "))))
+                        .build());
 
         return methodBuilder(methodName.toString())
                 .addModifiers(PUBLIC, isStatic ? STATIC : DEFAULT)
